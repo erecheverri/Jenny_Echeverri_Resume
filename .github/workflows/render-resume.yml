@@ -1,0 +1,90 @@
+name: Render Resume to PDF
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write    # so we can commit the generated PDF
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm i -D playwright http-server
+          npx playwright install --with-deps chromium
+
+      - name: Start local server (serve repo for consistent assets)
+        run: |
+          npx http-server -p 8080 -c-1 ./ &
+          echo $! > server.pid
+          sleep 2
+
+      - name: Render PDF with Playwright
+        run: |
+          mkdir -p tools
+          cat > tools/render.js <<'EOF'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const url = process.env.RENDER_URL || 'http://127.0.0.1:8080/';
+            const out = process.env.OUT_FILE || 'Jenny_Echeverri_Resume.pdf';
+            const emulateScreen = (process.env.EMULATE_SCREEN || 'true') === 'true';
+            const paper = process.env.PAPER || 'Letter';   // 'A4' if you prefer
+            const margin = process.env.MARGIN || '0.5in';
+            const scale = parseFloat(process.env.SCALE || '1.0');
+
+            const browser = await chromium.launch();
+            const ctx = await browser.newContext();
+            const page = await ctx.newPage();
+
+            await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+            await page.waitForLoadState('networkidle', { timeout: 60000 });
+            // Wait for web fonts
+            await page.evaluate(() => document.fonts && document.fonts.ready && document.fonts.ready.then(() => true));
+            await page.emulateMedia({ media: emulateScreen ? 'screen' : 'print' });
+
+            await page.pdf({
+              path: out,
+              printBackground: true,
+              preferCSSPageSize: true,
+              scale,
+              margin: { top: margin, right: margin, bottom: margin, left: margin },
+              format: paper
+            });
+
+            await ctx.close();
+            await browser.close();
+            console.log(`Wrote ${out}`);
+          })().catch(err => { console.error(err); process.exit(1); });
+          EOF
+
+          node tools/render.js
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then kill $(cat server.pid) || true; fi
+
+      - name: Commit PDF
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Jenny_Echeverri_Resume.pdf
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update generated resume PDF"
+            git push
+          fi
