@@ -1,0 +1,9 @@
+@page { size: Letter; margin: 0.5in; }
+
+@media print {
+  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  a[href]::after { content: ""; }
+  h1, h2, h3 { break-after: avoid; }
+  p, li { orphans: 2; widows: 2; }
+  .no-break { break-inside: avoid; }
+}
